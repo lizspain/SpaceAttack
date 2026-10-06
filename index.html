@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Space Invaders</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      background: #000;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #000;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="starfield" aria-label="A black sky with twinkling yellow stars and a player ship"></canvas>
+
+  <script>
+    const STAR_COUNT = 128;
+    const STAR_SIZE = 1;
+    const MIN_TWINKLE_SPEED = 0.7;
+    const MAX_TWINKLE_SPEED = 1.8;
+    const SHIP_WIDTH = 28;
+    const SHIP_HEIGHT = 24;
+    const SHIP_BOTTOM_MARGIN = 20;
+    const SHIP_TAP_DISTANCE = 16;
+    const SHIP_SPEED = 280;
+    const PROJECTILE_WIDTH = 2;
+    const PROJECTILE_HEIGHT = 16;
+    const PROJECTILE_VELOCITY = -1;
+    const PROJECTILE_FIRE_INTERVAL = 200;
+
+    const canvas = document.querySelector("#starfield");
+    const context = canvas.getContext("2d");
+    let stars = [];
+    let width = 0;
+    let height = 0;
+    let shipX = 0;
+    let shipHasSpawned = false;
+    let previousFrameTime = 0;
+    let lastProjectileTime = -Infinity;
+    let projectileRequested = false;
+    const heldKeys = new Set();
+    const projectiles = [];
+    // Future collidables can join this set with getBounds() returning left, top, width, and height.
+    const collidableObjects = new Set();
+    const shipCollider = {
+      getBounds() {
+        return {
+          left: shipX,
+          top: height - SHIP_BOTTOM_MARGIN - SHIP_HEIGHT,
+          width: SHIP_WIDTH,
+          height: SHIP_HEIGHT,
+        };
+      },
+      collisions: [],
+    };
+
+    const LEFT_KEYS = new Set(["a", "arrowleft"]);
+    const RIGHT_KEYS = new Set(["d", "arrowright"]);
+
+    function createStar() {
+      return {
+        x: Math.random() * width,
+        y: Math.random() * height,
+        phase: Math.random() * Math.PI * 2,
+        speed: MIN_TWINKLE_SPEED + Math.random() * (MAX_TWINKLE_SPEED - MIN_TWINKLE_SPEED),
+      };
+    }
+
+    function resizeCanvas() {
+      const pixelRatio = window.devicePixelRatio || 1;
+      width = window.innerWidth;
+      height = window.innerHeight;
+
+      canvas.width = Math.round(width * pixelRatio);
+      canvas.height = Math.round(height * pixelRatio);
+      context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+      stars = Array.from({ length: STAR_COUNT }, createStar);
+      if (!shipHasSpawned) {
+        shipX = Math.max(0, (width - SHIP_WIDTH) / 2);
+        shipHasSpawned = true;
+      } else {
+        shipX = Math.min(shipX, Math.max(0, width - SHIP_WIDTH));
+      }
+    }
+
+    function moveShipBy(distance) {
+      shipX = Math.max(0, Math.min(width - SHIP_WIDTH, shipX + distance));
+    }
+
+    function handleKeyDown(event) {
+      const key = event.key.toLowerCase();
+      if (key === " ") {
+        event.preventDefault();
+        if (!heldKeys.has(key)) projectileRequested = true;
+        heldKeys.add(key);
+        return;
+      }
+
+      const isLeft = LEFT_KEYS.has(key);
+      const isRight = RIGHT_KEYS.has(key);
+
+      if (!isLeft && !isRight) return;
+      event.preventDefault();
+      heldKeys.add(key);
+
+      if (!event.repeat) {
+        moveShipBy(isLeft ? -SHIP_TAP_DISTANCE : SHIP_TAP_DISTANCE);
+      }
+    }
+
+    function handleKeyUp(event) {
+      heldKeys.delete(event.key.toLowerCase());
+    }
+
+    function getElapsedSeconds(time) {
+      if (previousFrameTime === 0) previousFrameTime = time;
+      const elapsedSeconds = Math.min((time - previousFrameTime) / 1000, 0.05);
+      previousFrameTime = time;
+      return elapsedSeconds;
+    }
+
+    function updateShip(elapsedSeconds) {
+      const movingLeft = [...heldKeys].some((key) => LEFT_KEYS.has(key));
+      const movingRight = [...heldKeys].some((key) => RIGHT_KEYS.has(key));
+      const direction = Number(movingRight) - Number(movingLeft);
+      moveShipBy(direction * SHIP_SPEED * elapsedSeconds);
+    }
+
+    function createProjectile() {
+      const shipBounds = shipCollider.getBounds();
+      return {
+        x: shipBounds.left + (SHIP_WIDTH - PROJECTILE_WIDTH) / 2,
+        y: shipBounds.top - PROJECTILE_HEIGHT,
+        width: PROJECTILE_WIDTH,
+        height: PROJECTILE_HEIGHT,
+        velocityX: 0,
+        velocityY: PROJECTILE_VELOCITY,
+        collisions: [],
+        getBounds() {
+          return { left: this.x, top: this.y, width: this.width, height: this.height };
+        },
+      };
+    }
+
+    function updateWeapon(time) {
+      const spacebarHeld = heldKeys.has(" ");
+      const shouldFire = projectileRequested
+        || (spacebarHeld && time - lastProjectileTime >= PROJECTILE_FIRE_INTERVAL);
+
+      if (!shouldFire) return;
+
+      projectiles.push(createProjectile());
+      lastProjectileTime = time;
+      projectileRequested = false;
+    }
+
+    function rectanglesOverlap(first, second) {
+      return first.left < second.left + second.width
+        && first.left + first.width > second.left
+        && first.top < second.top + second.height
+        && first.top + first.height > second.top;
+    }
+
+    function findCollisions(entity) {
+      const bounds = entity.getBounds();
+      return [...collidableObjects].filter((target) => (
+        typeof target.getBounds === "function"
+        && rectanglesOverlap(bounds, target.getBounds())
+      ));
+    }
+
+    function updateProjectiles(elapsedSeconds) {
+      const activeProjectiles = [];
+
+      for (const projectile of projectiles) {
+        // Velocity is in canvas pixels per 60 Hz frame; scale it for the frame duration.
+        projectile.x += projectile.velocityX * elapsedSeconds * 60;
+        projectile.y += projectile.velocityY * elapsedSeconds * 60;
+        projectile.collisions = findCollisions(projectile);
+
+        for (const target of projectile.collisions) {
+          target.onCollision?.(projectile);
+        }
+
+        const aboveCanvas = projectile.y + projectile.height < 0;
+        if (projectile.collisions.length === 0 && !aboveCanvas) {
+          activeProjectiles.push(projectile);
+        }
+      }
+
+      projectiles.length = 0;
+      projectiles.push(...activeProjectiles);
+      shipCollider.collisions = findCollisions(shipCollider);
+    }
+
+    function drawShip() {
+      const shipBounds = shipCollider.getBounds();
+
+      context.globalAlpha = 1;
+      context.fillStyle = "#39ff14";
+      context.beginPath();
+      context.moveTo(shipBounds.left + SHIP_WIDTH / 2, shipBounds.top);
+      context.lineTo(shipBounds.left + SHIP_WIDTH, shipBounds.top + SHIP_HEIGHT);
+      context.lineTo(shipBounds.left, shipBounds.top + SHIP_HEIGHT);
+      context.closePath();
+      context.fill();
+    }
+
+    function drawProjectiles() {
+      context.globalAlpha = 1;
+      context.fillStyle = "#39ff14";
+
+      for (const projectile of projectiles) {
+        context.fillRect(projectile.x, projectile.y, projectile.width, projectile.height);
+      }
+    }
+
+    function draw(time) {
+      const elapsedSeconds = getElapsedSeconds(time);
+      updateShip(elapsedSeconds);
+      updateWeapon(time);
+      updateProjectiles(elapsedSeconds);
+      context.clearRect(0, 0, width, height);
+
+      for (const star of stars) {
+        const twinkle = (Math.sin(time * 0.001 * star.speed + star.phase) + 1) / 2;
+        context.globalAlpha = 0.25 + twinkle * 0.75;
+        context.fillStyle = "#ffff00";
+        context.fillRect(star.x, star.y, STAR_SIZE, STAR_SIZE);
+      }
+
+      context.globalAlpha = 1;
+      drawProjectiles();
+      drawShip();
+      window.requestAnimationFrame(draw);
+    }
+
+    window.addEventListener("resize", resizeCanvas);
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+    window.addEventListener("blur", () => heldKeys.clear());
+    resizeCanvas();
+    window.requestAnimationFrame(draw);
+  </script>
+</body>
+</html>
