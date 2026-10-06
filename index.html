@@ -28,10 +28,98 @@
       width: 100%;
       height: 100%;
     }
+
+    #game-ui {
+      position: fixed;
+      inset: 0;
+      color: #fff;
+      font-family: Arial, sans-serif;
+      pointer-events: none;
+    }
+
+    #game-hud {
+      display: flex;
+      justify-content: space-between;
+      padding: 20px 24px;
+      font-size: 18px;
+      font-weight: 700;
+      text-shadow: 0 1px 4px #000;
+    }
+
+    .game-screen {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: rgb(0 0 0 / 78%);
+      text-align: center;
+      pointer-events: auto;
+    }
+
+    .game-screen[hidden],
+    #game-hud[hidden] {
+      display: none;
+    }
+
+    .screen-content {
+      max-width: 520px;
+    }
+
+    .game-screen h1 {
+      margin: 0 0 16px;
+      color: #ffff00;
+      font-size: clamp(32px, 7vw, 56px);
+      letter-spacing: 0.08em;
+    }
+
+    .game-screen p {
+      margin: 8px 0;
+      line-height: 1.5;
+    }
+
+    .game-screen button {
+      margin-top: 20px;
+      padding: 12px 24px;
+      border: 0;
+      border-radius: 4px;
+      background: #39ff14;
+      color: #000;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .game-screen button:focus-visible {
+      outline: 3px solid #fff;
+      outline-offset: 3px;
+    }
   </style>
 </head>
 <body>
   <canvas id="starfield" aria-label="A black sky with twinkling yellow stars and a player ship"></canvas>
+  <div id="game-ui">
+    <div id="game-hud" aria-live="polite" hidden>
+      <span>Lives: <span id="lives-value">3</span></span>
+      <span>Score: <span id="score-value">0</span></span>
+      <span>Wave: <span id="wave-value">1</span></span>
+    </div>
+    <section id="start-screen" class="game-screen" aria-labelledby="start-title">
+      <div class="screen-content">
+        <h1 id="start-title">SPACE INVADERS</h1>
+        <p>Move: A / D or the left and right arrow keys</p>
+        <p>Fire: tap or hold the spacebar</p>
+        <button id="start-button" type="button">Start Game</button>
+      </div>
+    </section>
+    <section id="game-over-screen" class="game-screen" aria-labelledby="game-over-title" hidden>
+      <div class="screen-content">
+        <h1 id="game-over-title">GAME OVER</h1>
+        <p>Final score: <span id="final-score">0</span></p>
+        <button id="restart-button" type="button">Play Again</button>
+      </div>
+    </section>
+  </div>
 
   <script>
     const STAR_COUNT = 128;
@@ -47,9 +135,22 @@
     const PROJECTILE_HEIGHT = 16;
     const PROJECTILE_VELOCITY = -1;
     const PROJECTILE_FIRE_INTERVAL = 200;
+    const START = "start";
+    const PLAYING = "playing";
+    const GAME_OVER = "game-over";
+    const STARTING_LIVES = 3;
 
     const canvas = document.querySelector("#starfield");
     const context = canvas.getContext("2d");
+    const startScreen = document.querySelector("#start-screen");
+    const gameOverScreen = document.querySelector("#game-over-screen");
+    const gameHud = document.querySelector("#game-hud");
+    const livesValue = document.querySelector("#lives-value");
+    const scoreValue = document.querySelector("#score-value");
+    const waveValue = document.querySelector("#wave-value");
+    const finalScore = document.querySelector("#final-score");
+    const startButton = document.querySelector("#start-button");
+    const restartButton = document.querySelector("#restart-button");
     let stars = [];
     let width = 0;
     let height = 0;
@@ -58,6 +159,9 @@
     let previousFrameTime = 0;
     let lastProjectileTime = -Infinity;
     let projectileRequested = false;
+    let gameState = START;
+    let gameData = { lives: STARTING_LIVES, score: 0, wave: 1 };
+    let previousShipCollisions = new Set();
     const heldKeys = new Set();
     const projectiles = [];
     // Future collidables can join this set with getBounds() returning left, top, width, and height.
@@ -108,6 +212,8 @@
     }
 
     function handleKeyDown(event) {
+      if (gameState !== PLAYING) return;
+
       const key = event.key.toLowerCase();
       if (key === " ") {
         event.preventDefault();
@@ -130,6 +236,44 @@
 
     function handleKeyUp(event) {
       heldKeys.delete(event.key.toLowerCase());
+    }
+
+    function updateHud() {
+      livesValue.textContent = gameData.lives;
+      scoreValue.textContent = gameData.score;
+      waveValue.textContent = gameData.wave;
+      finalScore.textContent = gameData.score;
+    }
+
+    function setGameState(nextState) {
+      gameState = nextState;
+      startScreen.hidden = gameState !== START;
+      gameHud.hidden = gameState !== PLAYING;
+      gameOverScreen.hidden = gameState !== GAME_OVER;
+      updateHud();
+    }
+
+    function resetGameData() {
+      gameData = { lives: STARTING_LIVES, score: 0, wave: 1 };
+      projectiles.length = 0;
+      collidableObjects.clear();
+      previousShipCollisions.clear();
+      shipCollider.collisions = [];
+      shipX = Math.max(0, (width - SHIP_WIDTH) / 2);
+      lastProjectileTime = -Infinity;
+      projectileRequested = false;
+      heldKeys.clear();
+      previousFrameTime = 0;
+    }
+
+    function initializeGame() {
+      resetGameData();
+      setGameState(START);
+    }
+
+    function startNewGame() {
+      resetGameData();
+      setGameState(PLAYING);
     }
 
     function getElapsedSeconds(time) {
@@ -189,8 +333,25 @@
       ));
     }
 
+    function updateShipCollisions() {
+      const collisions = findCollisions(shipCollider);
+      const newCollisions = collisions.filter((target) => !previousShipCollisions.has(target));
+
+      for (const target of newCollisions) {
+        gameData.lives = Math.max(0, gameData.lives - 1);
+        target.onShipCollision?.(shipCollider);
+      }
+
+      shipCollider.collisions = collisions;
+      previousShipCollisions = new Set(collisions);
+
+      if (newCollisions.length > 0) updateHud();
+      if (gameData.lives === 0) setGameState(GAME_OVER);
+    }
+
     function updateProjectiles(elapsedSeconds) {
       const activeProjectiles = [];
+      let scoreChanged = false;
 
       for (const projectile of projectiles) {
         // Velocity is in canvas pixels per 60 Hz frame; scale it for the frame duration.
@@ -199,6 +360,8 @@
         projectile.collisions = findCollisions(projectile);
 
         for (const target of projectile.collisions) {
+          gameData.score += Number(target.scoreValue) || 0;
+          scoreChanged = true;
           target.onCollision?.(projectile);
         }
 
@@ -210,7 +373,8 @@
 
       projectiles.length = 0;
       projectiles.push(...activeProjectiles);
-      shipCollider.collisions = findCollisions(shipCollider);
+      updateShipCollisions();
+      if (scoreChanged) updateHud();
     }
 
     function drawShip() {
@@ -237,9 +401,11 @@
 
     function draw(time) {
       const elapsedSeconds = getElapsedSeconds(time);
-      updateShip(elapsedSeconds);
-      updateWeapon(time);
-      updateProjectiles(elapsedSeconds);
+      if (gameState === PLAYING) {
+        updateShip(elapsedSeconds);
+        updateWeapon(time);
+        updateProjectiles(elapsedSeconds);
+      }
       context.clearRect(0, 0, width, height);
 
       for (const star of stars) {
@@ -259,7 +425,10 @@
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("keyup", handleKeyUp);
     window.addEventListener("blur", () => heldKeys.clear());
+    startButton.addEventListener("click", startNewGame);
+    restartButton.addEventListener("click", startNewGame);
     resizeCanvas();
+    initializeGame();
     window.requestAnimationFrame(draw);
   </script>
 </body>
