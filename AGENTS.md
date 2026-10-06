@@ -16,4 +16,5 @@
 - Do not run separate tests or validation for prompt-log workbook updates unless the user asks; keep workbook logging lightweight.
 - After each prompt, include a link to `index.html` in the response so the designer can open or refresh it manually.
 - After implementation, run the relevant build or verification command. If there is no configured build or test system, use a focused check appropriate to the change and state what was checked.
+- Remove the temporary P debug shortcut before publishing the game.
 - Keep this document aligned with the user's latest project preferences.

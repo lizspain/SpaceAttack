@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Space Invaders</title>
+  <title>Space Attack</title>
   <style>
     :root {
       color-scheme: dark;
@@ -106,7 +106,7 @@
     </div>
     <section id="start-screen" class="game-screen" aria-labelledby="start-title">
       <div class="screen-content">
-        <h1 id="start-title">SPACE INVADERS</h1>
+        <h1 id="start-title">SPACE ATTACK</h1>
         <p>Move: A / D or the left and right arrow keys</p>
         <p>Fire: tap or hold the spacebar</p>
         <button id="start-button" type="button">Start Game</button>
@@ -133,12 +133,49 @@
     const SHIP_SPEED = 280;
     const PROJECTILE_WIDTH = 2;
     const PROJECTILE_HEIGHT = 16;
-    const PROJECTILE_VELOCITY = -1;
+    const PROJECTILE_VELOCITY = -2;
     const PROJECTILE_FIRE_INTERVAL = 200;
+    const ENEMY_SIZE = 32;
+    const ENEMY_PROJECTILE_WIDTH = 2;
+    const ENEMY_PROJECTILE_HEIGHT = 16;
+    const ENEMY_PROJECTILE_VELOCITY = 2;
+    const ENEMY_FIRE_INTERVAL = 3000;
+    const ENEMY_COLOR = "#ff3030";
+    const ENEMY_EDGE_MARGIN = 64;
+    const ENEMY_DESCENT_DISTANCE = 64;
+    const ENEMY_FORMATION_START_SPEED = 0.4;
+    const ENEMY_FORMATION_SPEED_MULTIPLIER = 1.2;
+    const INITIAL_ENEMY_ROWS = 2;
+    const INITIAL_ENEMY_COLUMNS = 4;
+    const MAX_ENEMY_ROWS = 6;
+    const MAX_ENEMY_COLUMNS = 16;
+    const MAX_ENEMIES = MAX_ENEMY_ROWS * MAX_ENEMY_COLUMNS;
+    const INITIAL_ENEMY_COUNT = INITIAL_ENEMY_ROWS * INITIAL_ENEMY_COLUMNS;
+    const ENEMY_GRID_GAP = 16;
+    const HUD_TOP_PADDING = 20;
+    const HUD_ROW_HEIGHT = 20;
+    const ENEMY_HUD_GAP = 20;
+    const SHIP_FLASH_INTERVAL = 0.1;
     const START = "start";
     const PLAYING = "playing";
     const GAME_OVER = "game-over";
     const STARTING_LIVES = 3;
+    const ENEMY_FORMATION = "formation";
+    const ENEMY_ADVANCING = "advancing";
+    const ENEMY_FIRE_CHANCE = {
+      [ENEMY_FORMATION]: 0.15,
+      [ENEMY_ADVANCING]: 0.8,
+    };
+    const ENEMY_SPRITE = [
+      "...##...",
+      "..####..",
+      ".######.",
+      "########",
+      "##.##.##",
+      "########",
+      ".#.##.#.",
+      "##....##",
+    ];
 
     const canvas = document.querySelector("#starfield");
     const context = canvas.getContext("2d");
@@ -154,16 +191,28 @@
     let stars = [];
     let width = 0;
     let height = 0;
+    let enemies = [];
+    let formationColumns = INITIAL_ENEMY_COLUMNS;
+    let formationX = 0;
+    let formationY = HUD_TOP_PADDING + HUD_ROW_HEIGHT + ENEMY_HUD_GAP;
+    let formationDirection = 1;
+    let formationSpeed = ENEMY_FORMATION_START_SPEED;
+    let formationStartSpeed = ENEMY_FORMATION_START_SPEED;
     let shipX = 0;
     let shipHasSpawned = false;
     let previousFrameTime = 0;
     let lastProjectileTime = -Infinity;
     let projectileRequested = false;
+    let shipFlashElapsed = 0;
+    let shipFlashChangesRemaining = 0;
+    let shipIsFlashingBlack = false;
+    let shipIsFlashing = false;
     let gameState = START;
     let gameData = { lives: STARTING_LIVES, score: 0, wave: 1 };
     let previousShipCollisions = new Set();
     const heldKeys = new Set();
     const projectiles = [];
+    const enemyProjectiles = [];
     // Future collidables can join this set with getBounds() returning left, top, width, and height.
     const collidableObjects = new Set();
     const shipCollider = {
@@ -190,6 +239,71 @@
       };
     }
 
+    function createEnemy(x, y) {
+      return {
+        x,
+        y,
+        width: ENEMY_SIZE,
+        height: ENEMY_SIZE,
+        color: ENEMY_COLOR,
+        state: ENEMY_FORMATION,
+        fireCycleStartedAt: null,
+        type: "enemy",
+        getBounds() {
+          return { left: this.x, top: this.y, width: this.width, height: this.height };
+        },
+      };
+    }
+
+    function getEnemyGridWidth() {
+      return formationColumns * ENEMY_SIZE
+        + (formationColumns - 1) * ENEMY_GRID_GAP;
+    }
+
+    function getFormationLimits() {
+      const gridWidth = getEnemyGridWidth();
+      const minX = Math.min(ENEMY_EDGE_MARGIN, Math.max(0, (width - gridWidth) / 2));
+      const maxX = Math.max(minX, width - ENEMY_EDGE_MARGIN - gridWidth);
+      return { minX, maxX };
+    }
+
+    function positionEnemies() {
+      let index = 0;
+      for (let row = 0; index < enemies.length; row += 1) {
+        const rowCount = Math.min(formationColumns, enemies.length - index);
+        const rowWidth = rowCount * ENEMY_SIZE + (rowCount - 1) * ENEMY_GRID_GAP;
+        const rowLeft = formationX + (getEnemyGridWidth() - rowWidth) / 2;
+        for (let column = 0; column < rowCount; column += 1) {
+          const enemy = enemies[index];
+          enemy.x = rowLeft + column * (ENEMY_SIZE + ENEMY_GRID_GAP);
+          enemy.y = formationY + row * (ENEMY_SIZE + ENEMY_GRID_GAP);
+          index += 1;
+        }
+      }
+    }
+
+    function getEnemyGridLayout(enemyCount) {
+      const columns = Math.min(MAX_ENEMY_COLUMNS, Math.max(
+        INITIAL_ENEMY_COLUMNS,
+        Math.ceil(Math.sqrt(enemyCount * 2)),
+        Math.ceil(enemyCount / MAX_ENEMY_ROWS),
+      ));
+      return { columns, rows: Math.ceil(enemyCount / columns) };
+    }
+
+    function createEnemyGrid(enemyCount = gameData.enemiesPerWave) {
+      formationColumns = getEnemyGridLayout(enemyCount).columns;
+      enemies = Array.from({ length: enemyCount }, () => createEnemy(0, 0));
+
+      const { minX, maxX } = getFormationLimits();
+      formationX = Math.max(minX, Math.min(maxX, (width - getEnemyGridWidth()) / 2));
+      formationY = HUD_TOP_PADDING + HUD_ROW_HEIGHT + ENEMY_HUD_GAP;
+      formationDirection = 1;
+      formationSpeed = formationStartSpeed;
+      positionEnemies();
+      for (const enemy of enemies) collidableObjects.add(enemy);
+    }
+
     function resizeCanvas() {
       const pixelRatio = window.devicePixelRatio || 1;
       width = window.innerWidth;
@@ -199,6 +313,9 @@
       canvas.height = Math.round(height * pixelRatio);
       context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
       stars = Array.from({ length: STAR_COUNT }, createStar);
+      const { minX, maxX } = getFormationLimits();
+      formationX = Math.max(minX, Math.min(maxX, formationX));
+      positionEnemies();
       if (!shipHasSpawned) {
         shipX = Math.max(0, (width - SHIP_WIDTH) / 2);
         shipHasSpawned = true;
@@ -215,6 +332,14 @@
       if (gameState !== PLAYING) return;
 
       const key = event.key.toLowerCase();
+      // DEBUG ONLY: remove the P shortcut before publishing.
+      if (key === "p") {
+        heldKeys.clear();
+        gameData.lives = 0;
+        setGameState(GAME_OVER);
+        return;
+      }
+
       if (key === " ") {
         event.preventDefault();
         if (!heldKeys.has(key)) projectileRequested = true;
@@ -254,14 +379,26 @@
     }
 
     function resetGameData() {
-      gameData = { lives: STARTING_LIVES, score: 0, wave: 1 };
+      gameData = {
+        lives: STARTING_LIVES,
+        score: 0,
+        wave: 1,
+        enemiesPerWave: INITIAL_ENEMY_COUNT,
+      };
       projectiles.length = 0;
       collidableObjects.clear();
       previousShipCollisions.clear();
       shipCollider.collisions = [];
+      shipFlashElapsed = 0;
+      shipFlashChangesRemaining = 0;
+      shipIsFlashingBlack = false;
+      shipIsFlashing = false;
       shipX = Math.max(0, (width - SHIP_WIDTH) / 2);
       lastProjectileTime = -Infinity;
       projectileRequested = false;
+      enemyProjectiles.length = 0;
+      formationStartSpeed = ENEMY_FORMATION_START_SPEED;
+      createEnemyGrid();
       heldKeys.clear();
       previousFrameTime = 0;
     }
@@ -288,6 +425,133 @@
       const movingRight = [...heldKeys].some((key) => RIGHT_KEYS.has(key));
       const direction = Number(movingRight) - Number(movingLeft);
       moveShipBy(direction * SHIP_SPEED * elapsedSeconds);
+    }
+
+    function updateFormation(elapsedSeconds) {
+      if (enemies.length > 0 && enemies.every((enemy) => enemy.state === ENEMY_FORMATION)) {
+        const { minX, maxX } = getFormationLimits();
+        if (maxX > minX) {
+          // Formation speed is measured in canvas pixels per 60 Hz frame.
+          formationX += formationDirection * formationSpeed * elapsedSeconds * 60;
+
+          if (formationDirection > 0 && formationX >= maxX) {
+            formationX = maxX;
+            formationDirection = -1;
+            formationY += ENEMY_DESCENT_DISTANCE;
+            formationSpeed *= ENEMY_FORMATION_SPEED_MULTIPLIER;
+          } else if (formationDirection < 0 && formationX <= minX) {
+            formationX = minX;
+            formationDirection = 1;
+            formationY += ENEMY_DESCENT_DISTANCE;
+            formationSpeed *= ENEMY_FORMATION_SPEED_MULTIPLIER;
+          }
+        }
+      }
+
+      positionEnemies();
+
+      for (const enemy of [...enemies]) {
+        if (enemy.y + enemy.height >= height) {
+          removeEnemy(enemy);
+          loseShipLife();
+          if (gameState !== PLAYING) break;
+        }
+      }
+    }
+
+    function startNextWave() {
+      const requestedCount = Math.ceil(gameData.enemiesPerWave * 1.2);
+      gameData.wave += 1;
+      if (requestedCount > MAX_ENEMIES) {
+        gameData.enemiesPerWave = MAX_ENEMIES;
+        formationStartSpeed *= 1.5;
+      } else {
+        gameData.enemiesPerWave = requestedCount;
+      }
+      createEnemyGrid();
+      updateHud();
+    }
+
+    function createEnemyProjectile(enemy) {
+      return {
+        x: enemy.x + (enemy.width - ENEMY_PROJECTILE_WIDTH) / 2,
+        y: enemy.y + enemy.height,
+        width: ENEMY_PROJECTILE_WIDTH,
+        height: ENEMY_PROJECTILE_HEIGHT,
+        velocityX: 0,
+        velocityY: ENEMY_PROJECTILE_VELOCITY,
+        getBounds() {
+          return { left: this.x, top: this.y, width: this.width, height: this.height };
+        },
+      };
+    }
+
+    function updateEnemy(enemy, time) {
+      if (enemy.fireCycleStartedAt === null) {
+        enemy.fireCycleStartedAt = time;
+        return;
+      }
+
+      while (time - enemy.fireCycleStartedAt >= ENEMY_FIRE_INTERVAL) {
+        enemy.fireCycleStartedAt += ENEMY_FIRE_INTERVAL;
+        if (Math.random() < ENEMY_FIRE_CHANCE[enemy.state]) {
+          enemyProjectiles.push(createEnemyProjectile(enemy));
+        }
+      }
+    }
+
+    function startShipFlash() {
+      shipIsFlashing = true;
+      shipIsFlashingBlack = true;
+      shipFlashElapsed = 0;
+      shipFlashChangesRemaining = 5;
+    }
+
+    function updateShipFlash(elapsedSeconds) {
+      if (!shipIsFlashing) return;
+
+      shipFlashElapsed += elapsedSeconds;
+      while (shipFlashElapsed >= SHIP_FLASH_INTERVAL && shipFlashChangesRemaining > 0) {
+        shipFlashElapsed -= SHIP_FLASH_INTERVAL;
+        shipFlashChangesRemaining -= 1;
+        shipIsFlashingBlack = !shipIsFlashingBlack;
+      }
+
+      if (shipFlashChangesRemaining === 0) {
+        shipIsFlashing = false;
+        shipIsFlashingBlack = false;
+      }
+    }
+
+    function loseShipLife() {
+      if (gameState !== PLAYING) return;
+      gameData.lives = Math.max(0, gameData.lives - 1);
+      startShipFlash();
+      updateHud();
+      if (gameData.lives === 0) setGameState(GAME_OVER);
+    }
+
+    function updateEnemies(time) {
+      for (const enemy of enemies) updateEnemy(enemy, time);
+    }
+
+    function updateEnemyProjectiles(elapsedSeconds) {
+      const activeProjectiles = [];
+      const shipBounds = shipCollider.getBounds();
+
+      for (const projectile of enemyProjectiles) {
+        projectile.y += projectile.velocityY * elapsedSeconds * 60;
+        const hitsShip = rectanglesOverlap(projectile.getBounds(), shipBounds);
+
+        if (hitsShip) {
+          loseShipLife();
+        } else if (projectile.y <= height) {
+          activeProjectiles.push(projectile);
+        }
+      }
+
+      enemyProjectiles.length = 0;
+      enemyProjectiles.push(...activeProjectiles);
     }
 
     function createProjectile() {
@@ -338,7 +602,7 @@
       const newCollisions = collisions.filter((target) => !previousShipCollisions.has(target));
 
       for (const target of newCollisions) {
-        gameData.lives = Math.max(0, gameData.lives - 1);
+        loseShipLife();
         target.onShipCollision?.(shipCollider);
       }
 
@@ -347,6 +611,17 @@
 
       if (newCollisions.length > 0) updateHud();
       if (gameData.lives === 0) setGameState(GAME_OVER);
+    }
+
+    function removeEnemy(enemy, awardPoints = false) {
+      const enemyIndex = enemies.indexOf(enemy);
+      if (enemyIndex === -1) return false;
+
+      enemies.splice(enemyIndex, 1);
+      collidableObjects.delete(enemy);
+      previousShipCollisions.delete(enemy);
+      if (awardPoints) gameData.score += 100;
+      return true;
     }
 
     function updateProjectiles(elapsedSeconds) {
@@ -360,9 +635,13 @@
         projectile.collisions = findCollisions(projectile);
 
         for (const target of projectile.collisions) {
-          gameData.score += Number(target.scoreValue) || 0;
-          scoreChanged = true;
-          target.onCollision?.(projectile);
+          if (target.type === "enemy") {
+            scoreChanged = removeEnemy(target, true) || scoreChanged;
+          } else {
+            gameData.score += Number(target.scoreValue) || 0;
+            scoreChanged = true;
+            target.onCollision?.(projectile);
+          }
         }
 
         const aboveCanvas = projectile.y + projectile.height < 0;
@@ -375,13 +654,14 @@
       projectiles.push(...activeProjectiles);
       updateShipCollisions();
       if (scoreChanged) updateHud();
+      if (gameState === PLAYING && enemies.length === 0) startNextWave();
     }
 
     function drawShip() {
       const shipBounds = shipCollider.getBounds();
 
       context.globalAlpha = 1;
-      context.fillStyle = "#39ff14";
+      context.fillStyle = shipIsFlashingBlack ? "#000000" : "#39ff14";
       context.beginPath();
       context.moveTo(shipBounds.left + SHIP_WIDTH / 2, shipBounds.top);
       context.lineTo(shipBounds.left + SHIP_WIDTH, shipBounds.top + SHIP_HEIGHT);
@@ -399,13 +679,39 @@
       }
     }
 
+    function drawEnemy(enemy) {
+      context.globalAlpha = 1;
+      context.fillStyle = enemy.color;
+
+      for (let row = 0; row < ENEMY_SPRITE.length; row += 1) {
+        for (let column = 0; column < ENEMY_SPRITE[row].length; column += 1) {
+          if (ENEMY_SPRITE[row][column] === "#") {
+            context.fillRect(enemy.x + column * 4, enemy.y + row * 4, 4, 4);
+          }
+        }
+      }
+    }
+
+    function drawEnemyProjectiles() {
+      context.globalAlpha = 1;
+      context.fillStyle = ENEMY_COLOR;
+
+      for (const projectile of enemyProjectiles) {
+        context.fillRect(projectile.x, projectile.y, projectile.width, projectile.height);
+      }
+    }
+
     function draw(time) {
       const elapsedSeconds = getElapsedSeconds(time);
       if (gameState === PLAYING) {
         updateShip(elapsedSeconds);
         updateWeapon(time);
+        updateFormation(elapsedSeconds);
         updateProjectiles(elapsedSeconds);
+        updateEnemies(time);
+        updateEnemyProjectiles(elapsedSeconds);
       }
+      updateShipFlash(elapsedSeconds);
       context.clearRect(0, 0, width, height);
 
       for (const star of stars) {
@@ -416,7 +722,9 @@
       }
 
       context.globalAlpha = 1;
+      for (const enemy of enemies) drawEnemy(enemy);
       drawProjectiles();
+      drawEnemyProjectiles();
       drawShip();
       window.requestAnimationFrame(draw);
     }
