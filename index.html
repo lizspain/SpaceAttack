@@ -144,7 +144,7 @@
     const ENEMY_EDGE_MARGIN = 64;
     const ENEMY_DESCENT_DISTANCE = 64;
     const ENEMY_FORMATION_START_SPEED = 0.4;
-    const ENEMY_FORMATION_SPEED_MULTIPLIER = 1.2;
+    const ENEMY_FORMATION_SPEED_MULTIPLIER = 1.3;
     const INITIAL_ENEMY_ROWS = 2;
     const INITIAL_ENEMY_COLUMNS = 4;
     const MAX_ENEMY_ROWS = 6;
@@ -239,10 +239,13 @@
       };
     }
 
-    function createEnemy(x, y) {
+    function createEnemy(x, y, gridRow, gridColumn, gridRowCount) {
       return {
         x,
         y,
+        gridRow,
+        gridColumn,
+        gridRowCount,
         width: ENEMY_SIZE,
         height: ENEMY_SIZE,
         color: ENEMY_COLOR,
@@ -268,17 +271,12 @@
     }
 
     function positionEnemies() {
-      let index = 0;
-      for (let row = 0; index < enemies.length; row += 1) {
-        const rowCount = Math.min(formationColumns, enemies.length - index);
-        const rowWidth = rowCount * ENEMY_SIZE + (rowCount - 1) * ENEMY_GRID_GAP;
+      for (const enemy of enemies) {
+        const rowWidth = enemy.gridRowCount * ENEMY_SIZE
+          + (enemy.gridRowCount - 1) * ENEMY_GRID_GAP;
         const rowLeft = formationX + (getEnemyGridWidth() - rowWidth) / 2;
-        for (let column = 0; column < rowCount; column += 1) {
-          const enemy = enemies[index];
-          enemy.x = rowLeft + column * (ENEMY_SIZE + ENEMY_GRID_GAP);
-          enemy.y = formationY + row * (ENEMY_SIZE + ENEMY_GRID_GAP);
-          index += 1;
-        }
+        enemy.x = rowLeft + enemy.gridColumn * (ENEMY_SIZE + ENEMY_GRID_GAP);
+        enemy.y = formationY + enemy.gridRow * (ENEMY_SIZE + ENEMY_GRID_GAP);
       }
     }
 
@@ -292,8 +290,14 @@
     }
 
     function createEnemyGrid(enemyCount = gameData.enemiesPerWave) {
-      formationColumns = getEnemyGridLayout(enemyCount).columns;
-      enemies = Array.from({ length: enemyCount }, () => createEnemy(0, 0));
+      const layout = getEnemyGridLayout(enemyCount);
+      formationColumns = layout.columns;
+      enemies = Array.from({ length: enemyCount }, (_, index) => {
+        const gridRow = Math.floor(index / layout.columns);
+        const gridColumn = index % layout.columns;
+        const gridRowCount = Math.min(layout.columns, enemyCount - gridRow * layout.columns);
+        return createEnemy(0, 0, gridRow, gridColumn, gridRowCount);
+      });
 
       const { minX, maxX } = getFormationLimits();
       formationX = Math.max(minX, Math.min(maxX, (width - getEnemyGridWidth()) / 2));
@@ -462,9 +466,13 @@
     function startNextWave() {
       const requestedCount = Math.ceil(gameData.enemiesPerWave * 1.2);
       gameData.wave += 1;
+      if (gameData.enemiesPerWave >= MAX_ENEMIES) {
+        formationStartSpeed *= 1.5;
+      } else {
+        formationStartSpeed *= 1.2;
+      }
       if (requestedCount > MAX_ENEMIES) {
         gameData.enemiesPerWave = MAX_ENEMIES;
-        formationStartSpeed *= 1.5;
       } else {
         gameData.enemiesPerWave = requestedCount;
       }
