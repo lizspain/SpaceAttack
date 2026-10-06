@@ -4,10 +4,15 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Space Attack</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
   <style>
     :root {
       color-scheme: dark;
       background: #000;
+      font-family: "Press Start 2P", monospace;
+      font-size: 32px;
     }
 
     * {
@@ -33,17 +38,32 @@
       position: fixed;
       inset: 0;
       color: #fff;
-      font-family: Arial, sans-serif;
       pointer-events: none;
     }
 
     #game-hud {
       display: flex;
       justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 20px 32px;
       padding: 20px 24px;
-      font-size: 18px;
+      font-size: 20px;
       font-weight: 700;
       text-shadow: 0 1px 4px #000;
+    }
+
+    #life-indicators {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 32px;
+    }
+
+    .life-sprite {
+      width: 32px;
+      height: 28px;
+      shape-rendering: crispEdges;
     }
 
     .game-screen {
@@ -63,31 +83,40 @@
     }
 
     .screen-content {
-      max-width: 520px;
+      max-width: min(960px, 100%);
     }
 
     .game-screen h1 {
       margin: 0 0 16px;
       color: #ffff00;
-      font-size: clamp(32px, 7vw, 56px);
+      font-size: clamp(32px, 5vw, 56px);
       letter-spacing: 0.08em;
     }
 
     .game-screen p {
       margin: 8px 0;
       line-height: 1.5;
+      font-size: 32px;
+    }
+
+    #start-screen p {
+      font-size: 20px;
     }
 
     .game-screen button {
       margin-top: 20px;
       padding: 12px 24px;
-      border: 0;
-      border-radius: 4px;
-      background: #39ff14;
-      color: #000;
+      border: 4px solid #39ff14;
+      border-radius: 0;
+      background: #064d1b;
+      color: #39ff14;
       font: inherit;
       font-weight: 700;
       cursor: pointer;
+    }
+
+    .game-screen button:hover {
+      background: #0a6826;
     }
 
     .game-screen button:focus-visible {
@@ -100,9 +129,9 @@
   <canvas id="starfield" aria-label="A black sky with twinkling yellow stars and a player ship"></canvas>
   <div id="game-ui">
     <div id="game-hud" aria-live="polite" hidden>
-      <span>Lives: <span id="lives-value">3</span></span>
-      <span>Score: <span id="score-value">0</span></span>
-      <span>Wave: <span id="wave-value">1</span></span>
+      <span id="life-indicators" role="img" aria-label="3 ship lives"></span>
+      <span>SCORE: <span id="score-value">0</span></span>
+      <span>WAVE: <span id="wave-value">1</span></span>
     </div>
     <section id="start-screen" class="game-screen" aria-labelledby="start-title">
       <div class="screen-content">
@@ -181,13 +210,21 @@
       ".#.##.#.",
       "##....##",
     ];
+    const SHIP_SPRITE = [
+      "...#...",
+      "..###..",
+      ".#####.",
+      "#######",
+      "##.#.##",
+      "#.....#",
+    ];
 
     const canvas = document.querySelector("#starfield");
     const context = canvas.getContext("2d");
     const startScreen = document.querySelector("#start-screen");
     const gameOverScreen = document.querySelector("#game-over-screen");
     const gameHud = document.querySelector("#game-hud");
-    const livesValue = document.querySelector("#lives-value");
+    const lifeIndicators = document.querySelector("#life-indicators");
     const scoreValue = document.querySelector("#score-value");
     const waveValue = document.querySelector("#wave-value");
     const finalScore = document.querySelector("#final-score");
@@ -340,9 +377,16 @@
     }
 
     function handleKeyDown(event) {
-      if (gameState !== PLAYING) return;
-
       const key = event.key.toLowerCase();
+      if (gameState !== PLAYING) {
+        if (key === " ") {
+          event.preventDefault();
+          if (!heldKeys.has(key)) projectileRequested = true;
+          heldKeys.add(key);
+        }
+        return;
+      }
+
       // DEBUG ONLY: remove the P shortcut before publishing.
       if (key === "p") {
         heldKeys.clear();
@@ -375,10 +419,34 @@
     }
 
     function updateHud() {
-      livesValue.textContent = gameData.lives;
       scoreValue.textContent = gameData.score;
       waveValue.textContent = gameData.wave;
       finalScore.textContent = gameData.score;
+      updateLifeIndicators();
+    }
+
+    function updateLifeIndicators() {
+      lifeIndicators.replaceChildren();
+      lifeIndicators.setAttribute("aria-label", `${gameData.lives} ship ${gameData.lives === 1 ? "life" : "lives"}`);
+      for (let index = 0; index < gameData.lives; index += 1) {
+        const sprite = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        sprite.setAttribute("class", "life-sprite");
+        sprite.setAttribute("viewBox", "0 0 7 6");
+        sprite.setAttribute("aria-hidden", "true");
+        for (let row = 0; row < SHIP_SPRITE.length; row += 1) {
+          for (let column = 0; column < SHIP_SPRITE[row].length; column += 1) {
+            if (SHIP_SPRITE[row][column] !== "#") continue;
+            const pixel = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+            pixel.setAttribute("x", column);
+            pixel.setAttribute("y", row);
+            pixel.setAttribute("width", "1");
+            pixel.setAttribute("height", "1");
+            pixel.setAttribute("fill", "#ffffff");
+            sprite.appendChild(pixel);
+          }
+        }
+        lifeIndicators.appendChild(sprite);
+      }
     }
 
     function setGameState(nextState) {
@@ -713,17 +781,49 @@
       if (gameState === PLAYING && enemies.length === 0) startNextWave();
     }
 
+    function updateButtonProjectiles(elapsedSeconds) {
+      const buttons = [...document.querySelectorAll(".game-screen:not([hidden]) button")];
+      const activeProjectiles = [];
+
+      for (const projectile of projectiles) {
+        projectile.x += projectile.velocityX * elapsedSeconds * 60;
+        projectile.y += projectile.velocityY * elapsedSeconds * 60;
+        const projectileBounds = projectile.getBounds();
+        const hitButton = buttons.find((button) => {
+          const bounds = button.getBoundingClientRect();
+          return rectanglesOverlap(projectileBounds, {
+            left: bounds.left,
+            top: bounds.top,
+            width: bounds.width,
+            height: bounds.height,
+          });
+        });
+
+        if (hitButton) {
+          hitButton.click();
+          projectiles.length = 0;
+          return;
+        } else if (projectile.y + projectile.height >= 0) {
+          activeProjectiles.push(projectile);
+        }
+      }
+
+      projectiles.length = 0;
+      projectiles.push(...activeProjectiles);
+    }
+
     function drawShip() {
       const shipBounds = shipCollider.getBounds();
 
       context.globalAlpha = 1;
       context.fillStyle = shipIsFlashingBlack ? "#000000" : "#39ff14";
-      context.beginPath();
-      context.moveTo(shipBounds.left + SHIP_WIDTH / 2, shipBounds.top);
-      context.lineTo(shipBounds.left + SHIP_WIDTH, shipBounds.top + SHIP_HEIGHT);
-      context.lineTo(shipBounds.left, shipBounds.top + SHIP_HEIGHT);
-      context.closePath();
-      context.fill();
+      for (let row = 0; row < SHIP_SPRITE.length; row += 1) {
+        for (let column = 0; column < SHIP_SPRITE[row].length; column += 1) {
+          if (SHIP_SPRITE[row][column] === "#") {
+            context.fillRect(shipBounds.left + column * 4, shipBounds.top + row * 4, 4, 4);
+          }
+        }
+      }
     }
 
     function drawProjectiles() {
@@ -766,6 +866,9 @@
         updateProjectiles(elapsedSeconds);
         updateEnemies(time, elapsedSeconds);
         updateEnemyProjectiles(elapsedSeconds);
+      } else {
+        updateWeapon(time);
+        updateButtonProjectiles(elapsedSeconds);
       }
       updateShipFlash(elapsedSeconds);
       context.clearRect(0, 0, width, height);
